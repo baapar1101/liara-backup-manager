@@ -1,0 +1,8 @@
+{
+  "name": "Liara Backup Manager",
+  "description": "Backup management dashboard for Liara SQL Server databases with scheduling, local storage, and Telegram notifications.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

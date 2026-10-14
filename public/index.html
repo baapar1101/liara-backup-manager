@@ -1,1 +1,513 @@
-<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>مدیریت بکاپ لیارا</title><link rel="stylesheet" href="/style.css"></head><body><main><header><h1>مدیریت بکاپ SQL Server / Liara</h1><span id="state">آفلاین</span></header><section class="panel" id="login"><h2>ورود مدیر</h2><form id="loginForm"><label>رمز عبور<input type="password" name="password" required autocomplete="current-password"></label><button>ورود</button></form></section><div id="workspace" hidden><nav><button type="button" id="logout">خروج</button><button type="button" id="refresh">به‌روزرسانی وضعیت</button></nav><div class="cards"><section class="panel"><h2>عملیات بکاپ</h2><p id="statusText">—</p><button id="backup">ایجاد بکاپ جدید</button> <a class="btn" href="/api/backups/latest/download">دانلود آخرین بکاپ</a><p class="hint">فایل بکاپ ابتدا با API لیارا ساخته، سپس روی دیسک همین سرور ذخیره می‌شود.</p></section><section class="panel"><h2>فایل‌های محلی</h2><div id="files">—</div></section></div><section class="panel"><h2>تنظیمات</h2><form id="settings"><div class="grid"><fieldset><legend>Liara API (مبنای عملیات بکاپ)</legend><label>Database ID<input name="databaseId" placeholder="شناسه دیتابیس لیارا"></label><label>API Token <span class="hint">(خالی = بدون تغییر)</span><input type="password" name="liaraToken" autocomplete="off"></label><label>API Base URL<input name="apiBase" readonly></label></fieldset><fieldset><legend>SQL Server (بررسی اتصال)</legend><label>Host<input name="sqlHost"></label><label>Port<input name="sqlPort" type="number"></label><label>Database<input name="sqlDatabase"></label><label>User<input name="sqlUser"></label><label>Password <span class="hint">(خالی = بدون تغییر)</span><input name="sqlPassword" type="password" autocomplete="off"></label><label><input type="checkbox" name="sqlEncrypt"> Encrypt</label><label><input type="checkbox" name="sqlTrustCertificate"> Trust Server Certificate</label><button type="button" id="testSql" class="secondary">تست اتصال SQL</button></fieldset><fieldset><legend>زمان‌بندی و فایل‌ها</legend><label><input type="checkbox" name="scheduleEnabled"> بکاپ خودکار فعال باشد</label><label>Cron<input name="cronExpression" placeholder="0 3 * * *" dir="ltr"></label><label>Time zone<input name="timezone" dir="ltr"></label><label>حداکثر تعداد فایل‌های محلی<input name="retention" type="number" min="1" max="1000"></label><p class="hint">محل فایل‌ها با متغیر DATA_DIR تعیین می‌شود. به دلایل امنیتی از UI قابل تغییر نیست.</p></fieldset><fieldset><legend>Telegram</legend><label><input type="checkbox" name="telegramEnabled"> ارسال تلگرام فعال باشد</label><label>Bot token <span class="hint">(خالی = بدون تغییر)</span><input name="telegramToken" type="password" autocomplete="off"></label><label>Chat ID<input name="telegramChatId" dir="ltr"></label><label>SOCKS5 proxy<input name="proxyUrl" dir="ltr"></label><label><input type="checkbox" name="sendOnManual"> برای بکاپ دستی هم ارسال شود</label><button type="button" id="testTelegram" class="secondary">آزمایش تلگرام</button></fieldset></div><button>ذخیره تنظیمات</button></form></section><section class="panel"><h2>تغییر رمز ورود</h2><form id="passwordForm"><div class="grid"><label>رمز فعلی<input type="password" name="currentPassword" required></label><label>رمز جدید (حداقل ۱۲ کاراکتر)<input type="password" name="newPassword" minlength="12" required></label></div><button>تغییر رمز</button></form></section></div><p id="toast" role="status"></p></main><script src="/app.js"></script></body></html>
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>مدیریت بکاپ لیارا | Liara SQL Server Backup</title>
+  <meta name="description" content="داشبورد مدیریت و زمان‌بندی بکاپ دیتابیس SQL Server در لیارا، ذخیره‌سازی محلی و ارسال خودکار به تلگرام.">
+  <meta property="og:title" content="مدیریت بکاپ لیارا">
+  <meta property="og:description" content="داشبورد مدیریت و زمان‌بندی بکاپ دیتابیس SQL Server در لیارا، ذخیره‌سازی محلی و ارسال خودکار به تلگرام.">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <!-- Top Bar -->
+  <header class="top-header">
+    <div class="top-header-inner">
+      <div class="brand-lockup">
+        <div class="brand-icon" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+            <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+            <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+          </svg>
+        </div>
+        <div>
+          <h1 class="brand-title">مدیریت بکاپ SQL Server</h1>
+        </div>
+      </div>
+
+      <div class="header-status-wrap">
+        <span id="stateBadge" class="status-indicator idle">
+          <span class="pulse-dot"></span>
+          <span id="state">در حال بررسی...</span>
+        </span>
+
+        <div id="headerActions" class="header-actions" hidden>
+          <button type="button" id="refresh" class="btn btn-secondary btn-sm" title="به‌روزرسانی وضعیت">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+            </svg>
+            <span>به‌روزرسانی</span>
+          </button>
+          <button type="button" id="logout" class="btn btn-secondary btn-sm" title="خروج از حساب">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+              <polyline points="16 17 21 12 16 7"></polyline>
+              <line x1="21" y1="12" x2="9" y2="12"></line>
+            </svg>
+            <span>خروج</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="app-container">
+
+    <!-- Login Panel -->
+    <section class="login-wrapper" id="login">
+      <div class="login-header">
+        <div class="login-icon">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+        </div>
+        <h2>ورود به پنل مدیریت</h2>
+        <p>برای دسترسی به ابزارهای بکاپ و تنظیمات امنیتی وارد شوید</p>
+      </div>
+
+      <form id="loginForm">
+        <div class="field">
+          <label for="adminPasswordInput">رمز عبور مدیر</label>
+          <div class="input-wrap">
+            <input type="password" id="adminPasswordInput" name="password" required autocomplete="current-password" placeholder="رمز عبور مدیر">
+          </div>
+        </div>
+
+        <button type="submit" id="loginBtn" class="btn btn-primary" style="width: 100%; margin-top: 8px;">
+          ورود به پنل
+        </button>
+
+        <div class="preview-cred-pill">
+          <span>رمز پیش‌فرض پیش‌نمایش: <code>admin12345678</code></span>
+          <button type="button" id="fillDefaultCreds">تکمیل خودکار</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Main Authenticated Workspace -->
+    <div id="workspace" hidden>
+
+      <!-- Navigation Tabs -->
+      <nav class="nav-tabs" role="tablist">
+        <button type="button" class="tab-btn active" data-tab="tab-overview">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="7" height="7"></rect>
+            <rect x="14" y="3" width="7" height="7"></rect>
+            <rect x="14" y="14" width="7" height="7"></rect>
+            <rect x="3" y="14" width="7" height="7"></rect>
+          </svg>
+          <span>داشبورد و بکاپ‌ها</span>
+        </button>
+
+        <button type="button" class="tab-btn" data-tab="tab-connections">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+            <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+            <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+          </svg>
+          <span>دیتابیس و Liara API</span>
+        </button>
+
+        <button type="button" class="tab-btn" data-tab="tab-schedule">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <polyline points="12 6 12 12 16 14"></polyline>
+          </svg>
+          <span>زمان‌بندی و تلگرام</span>
+        </button>
+
+        <button type="button" class="tab-btn" data-tab="tab-security">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+          </svg>
+          <span>امنیت و رمز عبور</span>
+        </button>
+      </nav>
+
+      <!-- Active Running Operation Banner -->
+      <section id="runningBanner" class="operation-banner running" style="display: none;">
+        <div class="operation-info">
+          <div class="operation-spinner"></div>
+          <div class="operation-text">
+            <h3 id="bannerTitle">عملیات بکاپ در حال انجام است...</h3>
+            <p id="bannerDetail">ارتباط با API لیارا و آماده‌سازی فایل بکاپ</p>
+          </div>
+        </div>
+        <div class="operation-meta tabular-nums" id="bannerElapsed">
+          ۰ ثانیه سپری شده
+        </div>
+      </section>
+
+      <!-- TAB 1: OVERVIEW & BACKUPS -->
+      <div id="tab-overview" class="tab-content">
+        <!-- Stat Strip -->
+        <div class="stats-strip">
+          <div class="stat-card">
+            <div class="stat-label">
+              <span>وضعیت موتور بکاپ</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 14 14"></polyline></svg>
+            </div>
+            <div class="stat-value" id="statEngineState">آماده</div>
+            <div class="stat-hint" id="statEngineHint">منتظر شروع عملیات یا زمان‌بندی</div>
+          </div>
+
+          <div class="stat-card">
+            <div class="stat-label">
+              <span>تعداد فایل‌های محلی</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+            </div>
+            <div class="stat-value tabular-nums" id="statFileCount">۰</div>
+            <div class="stat-hint">فایل‌های .bak ذخیره شده روی سرور</div>
+          </div>
+
+          <div class="stat-card">
+            <div class="stat-label">
+              <span>فضای مصرف‌شده دیسک</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path></svg>
+            </div>
+            <div class="stat-value tabular-nums" id="statTotalSize">۰ MB</div>
+            <div class="stat-hint" id="statRetentionHint">سقف نگهداری: ۱۴ فایل</div>
+          </div>
+
+          <div class="stat-card">
+            <div class="stat-label">
+              <span>بکاپ خودکار</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            </div>
+            <div class="stat-value" id="statAutoBackup">غیرفعال</div>
+            <div class="stat-hint" id="statCronHint">0 3 * * *</div>
+          </div>
+        </div>
+
+        <div class="cards-grid">
+          <!-- Backup Trigger Card -->
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <h2 class="panel-title">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                  <span>اقدامات بکاپ‌گیری</span>
+                </h2>
+                <p class="panel-subtitle">ایجاد بکاپ فوری ابری از طریق API لیارا و دانلود روی سرور</p>
+              </div>
+            </div>
+
+            <p id="statusText" style="margin-bottom: 16px; font-size: 14px; color: var(--text-secondary);">—</p>
+
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+              <button type="button" id="backup" class="btn btn-primary">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                <span>شروع بکاپ فوری</span>
+              </button>
+              <a class="btn btn-secondary" id="latestDownloadBtn" href="/api/backups/latest/download">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                <span>دانلود آخرین فایل</span>
+              </a>
+            </div>
+
+            <p class="hint" style="margin-top: 16px;">
+              فایل بکاپ ابتدا با API لیارا در کلاود ایجاد می‌شود، سپس پس از آماده‌شدن به‌صورت امن در دایرکتوری داده‌های این سرور ذخیره می‌گردد.
+            </p>
+          </section>
+
+          <!-- Local Backup Files Card -->
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <h2 class="panel-title">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                  <span>فایل‌های بکاپ محلی</span>
+                </h2>
+                <p class="panel-subtitle">آرشیو فایل‌های ذخیره شده روی دیسک با امکان دانلود و ارسال</p>
+              </div>
+            </div>
+
+            <div class="files-toolbar">
+              <div class="search-input-wrap">
+                <span class="search-icon">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                </span>
+                <input type="text" id="fileSearch" placeholder="جستجو در فایل‌ها..." dir="ltr">
+              </div>
+
+              <div style="font-size: 13px; color: var(--text-muted);" id="fileCountBadge">
+                ۰ فایل
+              </div>
+            </div>
+
+            <div id="files" class="files-container">
+              <div class="empty-state">
+                <div class="empty-state-icon">
+                  <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+                </div>
+                <p>هنوز فایلی روی سرور ذخیره نشده است.</p>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <!-- TAB 2: CONNECTIONS & LIARA API -->
+      <div id="tab-connections" class="tab-content" hidden>
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2 class="panel-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+                <span>اتصال به Liara و پایگاه‌داده SQL Server</span>
+              </h2>
+              <p class="panel-subtitle">شناسه دیتابیس لیارا و کلیدهای ارتباطی را وارد و ذخیره کنید</p>
+            </div>
+          </div>
+
+          <form id="settingsFormConnections">
+            <div class="form-grid">
+              <fieldset>
+                <legend>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path></svg>
+                  <span>تنظیمات Liara API (مبنای عملیات بکاپ)</span>
+                </legend>
+
+                <div class="field">
+                  <label for="databaseId">Database ID در لیارا</label>
+                  <input id="databaseId" name="databaseId" placeholder="شناسه دیتابیس در لیارا (مثال: sql-mydb)">
+                  <div class="hint">شناسه یکتای دیتابیس در پنل کاربری لیارا</div>
+                </div>
+
+                <div class="field">
+                  <label for="liaraToken">API Token لیارا <span class="hint">(خالی = بدون تغییر)</span></label>
+                  <input id="liaraToken" type="password" name="liaraToken" autocomplete="off" placeholder="ثبت نشده">
+                  <div class="hint">توکن با الگوریتم AES-256 رمزنگاری شده و روی سرور امن می‌ماند.</div>
+                </div>
+
+                <div class="field">
+                  <label for="apiBase">API Base URL</label>
+                  <input id="apiBase" name="apiBase" value="https://api.liara.ir" readonly>
+                </div>
+              </fieldset>
+
+              <fieldset>
+                <legend>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+                  <span>SQL Server (بررسی مستقیم سلامت اتصال)</span>
+                </legend>
+
+                <div class="field">
+                  <label for="sqlHost">Host</label>
+                  <input id="sqlHost" name="sqlHost" placeholder="himalayas.liara.cloud">
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                  <div class="field">
+                    <label for="sqlPort">Port</label>
+                    <input id="sqlPort" name="sqlPort" type="number" placeholder="30179">
+                  </div>
+                  <div class="field">
+                    <label for="sqlDatabase">Database Name</label>
+                    <input id="sqlDatabase" name="sqlDatabase" placeholder="myDB">
+                  </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                  <div class="field">
+                    <label for="sqlUser">Username</label>
+                    <input id="sqlUser" name="sqlUser" placeholder="sa">
+                  </div>
+                  <div class="field">
+                    <label for="sqlPassword">Password <span class="hint">(خالی = بدون تغییر)</span></label>
+                    <input id="sqlPassword" name="sqlPassword" type="password" autocomplete="off" placeholder="ثبت نشده">
+                  </div>
+                </div>
+
+                <div style="display: flex; gap: 20px; margin: 14px 0;">
+                  <label class="toggle-label">
+                    <span class="switch">
+                      <input type="checkbox" id="sqlEncrypt" name="sqlEncrypt">
+                      <span class="slider"></span>
+                    </span>
+                    <span>Encrypt</span>
+                  </label>
+
+                  <label class="toggle-label">
+                    <span class="switch">
+                      <input type="checkbox" id="sqlTrustCertificate" name="sqlTrustCertificate">
+                      <span class="slider"></span>
+                    </span>
+                    <span>Trust Server Certificate</span>
+                  </label>
+                </div>
+
+                <div style="margin-top: 16px;">
+                  <button type="button" id="testSql" class="btn btn-secondary btn-sm">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                    <span>تست اتصال مستقیم SQL</span>
+                  </button>
+                  <div id="sqlTestResult" class="test-result-box"></div>
+                </div>
+              </fieldset>
+            </div>
+
+            <div style="margin-top: 24px; display: flex; justify-content: flex-end;">
+              <button type="submit" class="btn btn-primary">
+                ذخیره تنظیمات اتصال
+              </button>
+            </div>
+          </form>
+        </section>
+      </div>
+
+      <!-- TAB 3: SCHEDULER & TELEGRAM -->
+      <div id="tab-schedule" class="tab-content" hidden>
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2 class="panel-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                <span>زمان‌بندی خودکار و اعلان تلگرام</span>
+              </h2>
+              <p class="panel-subtitle">تعیین ساعات پشتیبان‌گیری دوره‌ای و تنظیم ربات تلگرام برای دریافت اعلان و فایل</p>
+            </div>
+          </div>
+
+          <form id="settingsFormSchedule">
+            <div class="form-grid">
+              <fieldset>
+                <legend>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                  <span>زمان‌بندی و چرخه نگهداری</span>
+                </legend>
+
+                <div class="field" style="margin-bottom: 20px;">
+                  <label class="toggle-label">
+                    <span class="switch">
+                      <input type="checkbox" id="scheduleEnabled" name="scheduleEnabled">
+                      <span class="slider"></span>
+                    </span>
+                    <span>بکاپ خودکار دوره‌ای فعال باشد</span>
+                  </label>
+                </div>
+
+                <div class="field">
+                  <label for="cronExpression">عبارت زمان‌بندی (Cron Expression)</label>
+                  <input id="cronExpression" name="cronExpression" placeholder="0 3 * * *" dir="ltr">
+                  <div class="hint">نمونه‌ها: <code>0 3 * * *</code> (هر روز ساعت ۳ صبح)، <code>0 */12 * * *</code> (هر ۱۲ ساعت)</div>
+                </div>
+
+                <div class="field">
+                  <label for="timezone">منطقه زمانی (Time Zone)</label>
+                  <input id="timezone" name="timezone" placeholder="Asia/Tehran" dir="ltr">
+                </div>
+
+                <div class="field">
+                  <label for="retention">حداکثر تعداد فایل‌های محلی (Retention)</label>
+                  <input id="retention" name="retention" type="number" min="1" max="1000" placeholder="14">
+                  <div class="hint">فایل‌های قدیمی‌تر پس از رسیدن به این تعداد به‌طور خودکار حذف می‌شوند.</div>
+                </div>
+              </fieldset>
+
+              <fieldset>
+                <legend>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                  <span>ربات تلگرام و پروکسی</span>
+                </legend>
+
+                <div class="field" style="margin-bottom: 20px;">
+                  <label class="toggle-label">
+                    <span class="switch">
+                      <input type="checkbox" id="telegramEnabled" name="telegramEnabled">
+                      <span class="slider"></span>
+                    </span>
+                    <span>ارسال اعلان و فایل به تلگرام فعال باشد</span>
+                  </label>
+                </div>
+
+                <div class="field">
+                  <label for="telegramToken">Bot Token <span class="hint">(خالی = بدون تغییر)</span></label>
+                  <input id="telegramToken" type="password" name="telegramToken" autocomplete="off" placeholder="ثبت نشده">
+                  <div class="hint">از طریق BotFather ایجاد و کپی کنید.</div>
+                </div>
+
+                <div class="field">
+                  <label for="telegramChatId">Chat ID مقصد</label>
+                  <input id="telegramChatId" name="telegramChatId" placeholder="مثال: 12345678 یا -10012345678" dir="ltr">
+                </div>
+
+                <div class="field">
+                  <label for="proxyUrl">SOCKS5 Proxy URL</label>
+                  <input id="proxyUrl" name="proxyUrl" placeholder="socks5h://127.0.0.1:7890" dir="ltr">
+                  <div class="hint">برای دور زدن محدودیت‌های تلگرام از پروتکل SOCKS5 استفاده می‌شود.</div>
+                </div>
+
+                <div class="field">
+                  <label class="toggle-label">
+                    <span class="switch">
+                      <input type="checkbox" id="sendOnManual" name="sendOnManual">
+                      <span class="slider"></span>
+                    </span>
+                    <span>برای بکاپ‌های دستی هم به تلگرام ارسال شود</span>
+                  </label>
+                </div>
+
+                <div style="margin-top: 16px;">
+                  <button type="button" id="testTelegram" class="btn btn-secondary btn-sm">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                    <span>ارسال پیام آزمایشی تلگرام</span>
+                  </button>
+                  <div id="telegramTestResult" class="test-result-box"></div>
+                </div>
+              </fieldset>
+            </div>
+
+            <div style="margin-top: 24px; display: flex; justify-content: flex-end;">
+              <button type="submit" class="btn btn-primary">
+                ذخیره زمان‌بندی و تلگرام
+              </button>
+            </div>
+          </form>
+        </section>
+      </div>
+
+      <!-- TAB 4: SECURITY & PASSWORD -->
+      <div id="tab-security" class="tab-content" hidden>
+        <section class="panel" style="max-width: 680px; margin: 0 auto;">
+          <div class="panel-header">
+            <div>
+              <h2 class="panel-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                <span>تغییر رمز ورود پنل مدیریت</span>
+              </h2>
+              <p class="panel-subtitle">رمز ورود جدید باید حداقل ۱۲ کاراکتر باشد</p>
+            </div>
+          </div>
+
+          <form id="passwordForm">
+            <div class="field">
+              <label for="currentPassword">رمز عبور فعلی</label>
+              <input id="currentPassword" type="password" name="currentPassword" required autocomplete="current-password">
+            </div>
+
+            <div class="field">
+              <label for="newPassword">رمز عبور جدید (حداقل ۱۲ کاراکتر)</label>
+              <input id="newPassword" type="password" name="newPassword" minlength="12" required autocomplete="new-password">
+            </div>
+
+            <button type="submit" class="btn btn-primary" style="margin-top: 8px;">
+              تغییر رمز عبور
+            </button>
+          </form>
+        </section>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- Multi-Toast Notifications Container -->
+  <div id="toast-container" aria-live="polite" role="region"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
