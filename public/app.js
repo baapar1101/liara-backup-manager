@@ -387,6 +387,57 @@ function renderFiles(files) {
   }
 }
 
+function renderRemoteBackups(backups, error = '') {
+  const container = $('remoteBackups');
+  const count = $('remoteBackupCount');
+  if (!container) return;
+  container.innerHTML = '';
+  if (count) count.textContent = `${backups.length.toLocaleString('fa-IR')} بکاپ`;
+
+  if (error || backups.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    const text = document.createElement('p');
+    text.textContent = error || 'بکاپی در Liara موجود نیست.';
+    empty.appendChild(text);
+    container.appendChild(empty);
+    return;
+  }
+
+  for (const backup of backups) {
+    const item = document.createElement('div');
+    item.className = 'file-item remote-file-item';
+    const lead = document.createElement('div');
+    lead.className = 'file-lead';
+    const icon = document.createElement('div');
+    icon.className = 'file-icon cloud-file-icon';
+    icon.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path><polyline points="8 15 12 19 16 15"></polyline><line x1="12" y1="19" x2="12" y2="10"></line></svg>`;
+    const details = document.createElement('div');
+    details.className = 'file-details';
+    const name = document.createElement('div');
+    name.className = 'file-name tabular-nums';
+    name.textContent = backup.name;
+    const meta = document.createElement('div');
+    meta.className = 'file-meta';
+    const kind = backup.name.startsWith('daily/') ? 'روزانه' : backup.name.startsWith('manual/') ? 'دستی' : 'ابری';
+    meta.innerHTML = `<span class="backup-kind">${kind}</span><span aria-hidden="true">·</span><span class="tabular-nums">${formatBytes(backup.size || 0)}</span><span aria-hidden="true">·</span><span>${formatDate(backup.lastModified)}</span>`;
+    details.append(name, meta);
+    lead.append(icon, details);
+
+    const actions = document.createElement('div');
+    actions.className = 'file-actions';
+    const download = document.createElement('a');
+    download.className = 'btn btn-primary btn-sm';
+    download.href = '/api/remote-backups/download?name=' + encodeURIComponent(backup.name);
+    download.target = '_blank';
+    download.rel = 'noopener';
+    download.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg><span>دانلود مستقیم</span>`;
+    actions.appendChild(download);
+    item.append(lead, actions);
+    container.appendChild(item);
+  }
+}
+
 // --- Live Backup Banner & Status ---
 function updateRunningBanner(status) {
   const banner = $('runningBanner');
@@ -427,9 +478,10 @@ function updateRunningBanner(status) {
 // --- State and Backups Refresh ---
 async function refresh() {
   try {
-    const [status, files] = await Promise.all([
+    const [status, files, remoteResult] = await Promise.all([
       req('/api/status'),
-      req('/api/backups')
+      req('/api/backups'),
+      req('/api/remote-backups').then(backups => ({ backups, error: '' })).catch(error => ({ backups: [], error: error.message }))
     ]);
 
     // Top status indicator badge
@@ -498,6 +550,7 @@ async function refresh() {
 
     // Render files
     renderFiles(files);
+    renderRemoteBackups(remoteResult.backups, remoteResult.error);
   } catch (err) {
     console.error('Refresh error:', err);
   }
